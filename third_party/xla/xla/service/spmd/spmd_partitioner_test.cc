@@ -2740,6 +2740,28 @@ ENTRY entry {
               AllOf(op::Select(_, rotate1, rotate0), op::Shape("f32[3]")));
 }
 
+TEST_P(SpmdPartitioningTest, MergedSliceThenConcatRotateRightWithSizeOneSlice) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  %param0 = f32[12] parameter(0), sharding={devices=[4]<=[4]}
+  %slice0 = f32[1] slice(%param0), slice={[11:12]}, sharding={devices=[4]<=[4]}
+  %slice1 = f32[11] slice(%param0), slice={[0:11]}, sharding={devices=[4]<=[4]}
+  ROOT %concat = f32[12] concatenate(%slice0, %slice1), dimensions={0},
+    sharding={devices=[4]<=[4]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/4));
+
+  const auto root = module->entry_computation()->root_instruction();
+  auto param0 = AllOf(op::Parameter(0), op::Shape("f32[3]"));
+  auto rotate = op::Concatenate(op::CollectivePermute(op::Slice(param0)),
+                                op::Slice(param0));
+  EXPECT_THAT(root, AllOf(rotate, op::Shape("f32[3]")));
+}
+
 TEST_P(SpmdPartitioningTest,
        PartialReplicateSliceAlongNonPartitionedDimension) {
   absl::string_view hlo_string = R"(
@@ -11077,11 +11099,11 @@ ENTRY entry {
 })";
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           PartitionComputation(hlo_string, /*num_devices=*/8));
-  const auto root = module->entry_computation()->root_instruction();
   VLOG(1) << module->ToString();
-  auto slice = AllOf(op::Shape("f32[1,1]"),
-                     op::Copy(op::DynamicSlice(op::Constant(), _, _)));
-  EXPECT_THAT(root, op::Reshape(op::AllReduce(op::Select(_, slice, _))));
+  auto constant = AllOf(op::Constant(), op::Shape("f32[1,8]"));
+  auto slice = AllOf(op::Slice(constant), op::Shape("f32[1,1]"));
+  auto reshaped = AllOf(op::Reshape(slice), op::Shape("f32[]"));
+  EXPECT_THAT(module->entry_computation()->root_instruction(), reshaped);
 }
 
 TEST_P(SpmdPartitioningTest, GatherParallelDimRedistributionOperand) {
@@ -13579,19 +13601,43 @@ ENTRY entry {
 
 TEST_P(SpmdPartitioningTest, PadWithWrapPattern) {
   absl::string_view hlo_string = R"(
-HloModule xla_computation_apply_fn__4.61
+HloModule module
 
-ENTRY %xla_computation_apply_fn__4.61 (parameter.7: f32[3,16,16,16,16,132]) -> f32[3,18,16,16,16,132] {
-  %parameter.7 = f32[3,16,16,16,16,132]{5,4,3,2,1,0} parameter(0), sharding={devices=[1,2,1,1,1,1]0,1}
-  %slice.2 = f32[3,1,16,16,16,132]{5,4,3,2,1,0} slice(f32[3,16,16,16,16,132]{5,4,3,2,1,0} %parameter.7), slice={[0:3], [15:16], [0:16], [0:16], [0:16], [0:132]}, sharding={devices=[1,2,1,1,1,1]0,1}
-  %slice.3 = f32[3,1,16,16,16,132]{5,4,3,2,1,0} slice(f32[3,16,16,16,16,132]{5,4,3,2,1,0} %parameter.7), slice={[0:3], [0:1], [0:16], [0:16], [0:16], [0:132]}, sharding={devices=[1,2,1,1,1,1]0,1}
-  ROOT %concatenate.3 = f32[3,18,16,16,16,132]{5,4,3,2,1,0} concatenate(f32[3,1,16,16,16,132]{5,4,3,2,1,0} %slice.2, f32[3,16,16,16,16,132]{5,4,3,2,1,0} %parameter.7, f32[3,1,16,16,16,132]{5,4,3,2,1,0} %slice.3), dimensions={1}, sharding={devices=[1,2,1,1,1,1]0,1}
+ENTRY entry {
+  p0 = f32[16,16] parameter(0), sharding={devices=[2,1]<=[2]}
+  left = f32[1,16] slice(p0), slice={[15:16], [0:16]}, sharding={devices=[2,1]<=[2]}
+  right = f32[1,16] slice(p0), slice={[0:1], [0:16]}, sharding={devices=[2,1]<=[2]}
+  ROOT concat = f32[18,16] concatenate(left, p0, right), dimensions={0}, sharding={devices=[2,1]<=[2]}
 }
 )";
 
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           PartitionComputation(hlo_string, /*num_devices=*/2));
-  VLOG(1) << module->ToString();
+
+  // Check that the partitioned code does not have all-reduce and two
+  // non-trivial collective permute instructions.
+  for (HloComputation* computation : module->computations()) {
+    for (HloInstruction* hlo : computation->instructions()) {
+      EXPECT_FALSE(IsTrivialCollectivePermute(hlo)) << hlo->ToString();
+      EXPECT_NE(hlo->opcode(), HloOpcode::kAllReduce) << hlo->ToString();
+    }
+  }
+}
+
+TEST_P(SpmdPartitioningTest, PadWithWrapPatternDifferentSharding) {
+  absl::string_view hlo_string = R"(
+HloModule module
+
+ENTRY entry {
+  p0 = f32[16,16] parameter(0), sharding={devices=[1,2]<=[2]}
+  left = f32[1,16] slice(p0), slice={[15:16], [0:16]}, sharding={devices=[1,2]<=[2]}
+  right = f32[1,16] slice(p0), slice={[0:1], [0:16]}, sharding={devices=[1,2]<=[2]}
+  ROOT concat = f32[18,16] concatenate(left, p0, right), dimensions={0}, sharding={devices=[2,1]<=[2]}
+}
+)";
+
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          PartitionComputation(hlo_string, /*num_devices=*/2));
 
   // Check that the partitioned code does not have all-reduce and two
   // non-trivial collective permute instructions.

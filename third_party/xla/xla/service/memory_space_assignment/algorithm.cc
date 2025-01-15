@@ -3972,10 +3972,11 @@ void MsaAlgorithm::UpdateReservedScopedAllocationSize() {
   for (RepackAllocationBlock& allocation_block : repack_allocation_blocks_) {
     Allocation* allocation = allocation_block.allocation;
     if (allocation->is_scoped_allocation()) {
-      allocation_block.size =
-          reserved_scoped_memory_map[allocation->start_time()];
-      allocation->mutable_chunk()->size =
-          reserved_scoped_memory_map[allocation->start_time()];
+      int64_t time = allocation->start_time();
+      peak_memory_usage_[time] +=
+          (reserved_scoped_memory_map[time] - allocation->chunk().size);
+      allocation_block.size = reserved_scoped_memory_map[time];
+      allocation->mutable_chunk()->size = reserved_scoped_memory_map[time];
     }
   }
 }
@@ -4174,8 +4175,8 @@ void MsaAlgorithm::UncommitPendingChunks(
   for (const auto& interval_and_chunk : pending_chunks_) {
     const MsaBufferInterval& interval = interval_and_chunk.first;
     const Chunk& chunk = interval_and_chunk.second;
-    VLOG(3) << "Uncommitting: (" << interval.start << ", " << interval.end
-            << ") off = " << chunk.offset << " size = " << chunk.size;
+    VLOG(3) << "Uncommitting: [" << interval.start << ", " << interval.end
+            << "] off = " << chunk.offset << " size = " << chunk.size;
     for (int i = interval.start; i <= interval.end; ++i) {
       peak_memory_usage_[i] -= chunk.size;
       CHECK_GE(peak_memory_usage_[i], 0)
@@ -4404,7 +4405,7 @@ AllocationResult MsaAlgorithm::AllocateSegment(AllocationRequest& request) {
   VLOG(2) << "Finding allocation for "
           << request.allocation_value->ToShortString() << " ["
           << request.inclusive_start_time << ", " << request.end_time
-          << ") latest prefetch = " << request.latest_prefetch_time
+          << "] latest prefetch = " << request.latest_prefetch_time
           << " last use = " << request.allocation_value->uses().back().time
           << " use = " << request.use->hlo_use.ToString()
           << ". Size = " << request.size
