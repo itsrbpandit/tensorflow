@@ -81,15 +81,16 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Export.h"
 #include "mlir/Transforms/Passes.h"
 #include "xla/autotuning.pb.h"
-#include "xla/backends/gpu/codegen/ir/xla_gpu_ops.h"
-#include "xla/backends/gpu/codegen/transforms/passes.h"
+#include "xla/backends/gpu/codegen/emitters/ir/xla_gpu_ops.h"
+#include "xla/backends/gpu/codegen/emitters/transforms/passes.h"
 #include "xla/backends/gpu/codegen/triton/compilation_pipeline.h"
 #include "xla/backends/gpu/codegen/triton/emitter_helpers.h"
 #include "xla/backends/gpu/codegen/triton/fusion_emitter_legacy_matmul.h"
 #include "xla/backends/gpu/codegen/triton/passes.h"
 #include "xla/backends/gpu/codegen/triton/xla_triton_ops.h"
+#include "xla/codegen/emitter_loc_op_builder.h"
 #include "xla/codegen/emitters/elemental_hlo_to_mlir.h"
-#include "xla/codegen/ir/xla_ops.h"
+#include "xla/codegen/emitters/ir/xla_ops.h"
 #include "xla/hlo/analysis/indexing_analysis.h"
 #include "xla/hlo/analysis/indexing_map.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
@@ -103,7 +104,6 @@ limitations under the License.
 #include "xla/permutation_util.h"
 #include "xla/service/dump.h"
 #include "xla/service/gpu/backend_configs.pb.h"
-#include "xla/service/gpu/fusions/emitter_loc_op_builder.h"
 #include "xla/service/gpu/ir_emission_utils.h"
 #include "xla/service/gpu/model/symbolic_tile_analysis.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
@@ -815,8 +815,13 @@ namespace ir_emitter_triton_internal {
 SmallVector<Value, 3> ComputeDelinearizedTileIndex(
     EmitterLocOpBuilder& b,
     absl::Span<const int64_t> num_output_tiles_per_dim) {
+  // TODO(b/389955087): we can decide whether to sign extend by understanding if
+  // we need 64 bits to encode indices or if 32 bits are enough. For now, just
+  // use 64 bits to avoid issues.
   Value pid = b.create<arith::IndexCastUIOp>(
-      b.getIndexType(), b.create<ttir::GetProgramIdOp>(ttir::ProgramIDDim::X));
+      b.getIndexType(),
+      b.create<arith::ExtSIOp>(b.getI64Type(), b.create<ttir::GetProgramIdOp>(
+                                                   ttir::ProgramIDDim::X)));
 
   // Delinearize the block id.
   mlir::AffineExpr program_id = mlir::getAffineDimExpr(0, b.getContext());
@@ -885,7 +890,10 @@ absl::StatusOr<MakeTensorPtrOpAndBoundaryChecks> CreateMakeTensorPtrOp(
     Value parent_size =
         CreateConst(b, b.getI64Type(), shape.dimensions(dim_idx))
             .UnwrapScalar();
-    Value offset = b.create<arith::IndexCastOp>(
+    // Offsets are necessarily positive since they represent a distance between
+    // 0 and the size of the tensor on the given axis. Therefore, it is safe to
+    // use 'IndexCastUI' here. This allows index canonicalizations later on.
+    Value offset = b.create<arith::IndexCastUIOp>(
         b.getI64Type(), tile_offsets_as_indices[dim_idx]);
     residual_shape.push_back(b.create<arith::SubIOp>(parent_size, offset));
 
@@ -1090,11 +1098,7 @@ absl::StatusOr<mlir::OwningOpRef<mlir::ModuleOp>> CreateTritonModule(
     if (type == U16) {
       ir_type = b.getI16Type();
     } else if (type == S4) {
-      if (debug_options.xla_gpu_experimental_enable_triton_i4_rewrites()) {
         ir_type = b.getI4Type();
-      } else {
-        ir_type = b.getI8Type();
-      }
     } else {
       TF_ASSIGN_OR_RETURN(ir_type, TritonType(b, type));
     }

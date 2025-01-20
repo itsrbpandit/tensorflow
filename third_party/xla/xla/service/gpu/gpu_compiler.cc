@@ -222,7 +222,6 @@ limitations under the License.
 #include "xla/service/gpu/transforms/sanitize_constant_names.h"
 #include "xla/service/gpu/transforms/scatter_expander.h"
 #include "xla/service/gpu/transforms/scatter_slice_simplifier.h"
-#include "xla/service/gpu/transforms/simplify_int4_dots.h"
 #include "xla/service/gpu/transforms/softmax_rewriter_triton.h"
 #include "xla/service/gpu/transforms/sort_rewriter.h"
 #include "xla/service/gpu/transforms/stream_attribute_annotator.h"
@@ -1488,6 +1487,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
   const GpuFloatSupport f8e3m4_support(gpu_version, F8E3M4, F16);
   const GpuFloatSupport s4_support(gpu_version, S4, S8);
   const GpuFloatSupport u4_support(gpu_version, U4, U8);
+  const GpuFloatSupport f4e2m1fn_support(gpu_version, F4E2M1FN, F16);
+  const GpuFloatSupport f8e8m0fnu_support(gpu_version, F8E8M0FNU, F32);
   auto add_float_normalization = [&](HloPassPipeline& pipeline) {
     auto& sub_pipeline =
         pipeline.AddPass<HloPassPipeline>("float_normalization");
@@ -1501,6 +1502,8 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
     sub_pipeline.AddPass<FloatNormalization>(&f8e3m4_support);
     sub_pipeline.AddPass<FloatNormalization>(&s4_support);
     sub_pipeline.AddPass<FloatNormalization>(&u4_support);
+    sub_pipeline.AddPass<FloatNormalization>(&f4e2m1fn_support);
+    sub_pipeline.AddPass<FloatNormalization>(&f8e8m0fnu_support);
     // Remove `f32 -> bf16 -> f32` casts inserted by bf16 normalization.
     if (debug_options.xla_allow_excess_precision()) {
       sub_pipeline.AddPass<SimplifyFPConversions>();
@@ -1556,9 +1559,6 @@ absl::Status GpuCompiler::OptimizeHloPostLayoutAssignment(
       pipeline.AddPass<GemvRewriter>();
       pipeline.AddPass<GemmFusion>(gpu_version);
       pipeline.AddPass<GemmFusionSwapOperands>();
-      if (!debug_options.xla_gpu_experimental_enable_triton_i4_rewrites()) {
-        pipeline.AddPass<SimplifyInt4Dots>();
-      }
     } else if (cuda_cc != nullptr &&
                cuda_cc->major == se::CudaComputeCapability::VOLTA) {
       // Greedy pattern matching for custom kernel fusions.

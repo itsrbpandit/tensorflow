@@ -15,6 +15,7 @@ limitations under the License.
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -39,13 +40,14 @@ limitations under the License.
 #include "xla/service/gpu/gpu_device_info_for_tests.h"
 #include "xla/service/gpu/model/tiled_hlo_computation.h"
 #include "xla/service/gpu/tests/gpu_codegen_test.h"
+#include "xla/shape.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/tsl/lib/core/status_test_util.h"
+#include "xla/tsl/platform/status_matchers.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/util.h"
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/status_matchers.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
 
 namespace xla {
 namespace gpu {
@@ -222,8 +224,8 @@ CHECK-DAG:        %[[ZERO:.*]] = arith.constant 0 : i32
 CHECK-DAG:        %[[C125:.*]] = arith.constant 125 : i64
 CHECK-DAG:        %[[C127:.*]] = arith.constant 127 : i64
 CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
-CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID]] : i32 to index
-CHECK-DAG:        %[[PID_I64:.*]] = arith.index_cast %[[PID_INDEX]] : index to i64
+CHECK-DAG:        %[[PID_I64:.*]] = arith.extsi %[[PID]] : i32 to i64
+CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID_I64]] : i64 to index
 CHECK-DAG:        %[[SUB:.*]] = arith.subi %[[C125]], %[[PID_I64]] : i64
 CHECK-DAG:        %[[OFFSET_IDX:.*]] = xla.apply_indexing #indexing_map(%[[PID_INDEX]])
 CHECK-DAG:        %[[OFFSET_I64:.*]] = arith.index_castui %[[OFFSET_IDX]] : index to i64
@@ -290,8 +292,8 @@ CHECK-DAG:        %[[ZERO:.*]] = arith.constant 0 : i32
 CHECK-DAG:        %[[C125:.*]] = arith.constant 125 : i64
 CHECK-DAG:        %[[C127:.*]] = arith.constant 127 : i64
 CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
-CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID]] : i32 to index
-CHECK-DAG:        %[[PID_I64:.*]] = arith.index_cast %[[PID_INDEX]] : index to i64
+CHECK-DAG:        %[[PID_I64:.*]] = arith.extsi %[[PID]] : i32 to i64
+CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID_I64]] : i64 to index
 CHECK-DAG:        %[[SUB:.*]] = arith.subi %[[C125]], %[[PID_I64]] : i64
 CHECK-DAG:        %[[OFFSET_IDX:.*]] = xla.apply_indexing #indexing_map(%[[PID_INDEX]])
 CHECK-DAG:        %[[OFFSET_I64:.*]] = arith.index_castui %[[OFFSET_IDX]] : index to i64
@@ -359,11 +361,12 @@ CHECK-DAG:        %[[C10:.*]] = arith.constant 10 : i64
 CHECK-DAG:        %[[C125:.*]] = arith.constant 125 : i64
 CHECK-DAG:        %[[C127:.*]] = arith.constant 127 : i64
 CHECK-DAG:        %[[PID:.*]] = tt.get_program_id x : i32
-CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID]] : i32 to index
+CHECK-DAG:        %[[PID_I64:.*]] = arith.extsi %[[PID]] : i32 to i64
+CHECK-DAG:        %[[PID_INDEX:.*]] = arith.index_castui %[[PID_I64]] : i64 to index
 CHECK-DAG:        %[[ROW_INDEX:.*]] = xla.apply_indexing #[[MAP]](%[[PID_INDEX]]
 CHECK-DAG:        %[[COL_INDEX:.*]] = xla.apply_indexing #[[MAP1]](%[[PID_INDEX]]
-CHECK-DAG:        %[[ROW_64:.*]] = arith.index_cast %[[ROW_INDEX]] : index to i64
-CHECK-DAG:        %[[COL_64:.*]] = arith.index_cast %[[COL_INDEX]] : index to i64
+CHECK-DAG:        %[[ROW_64:.*]] = arith.index_castui %[[ROW_INDEX]] : index to i64
+CHECK-DAG:        %[[COL_64:.*]] = arith.index_castui %[[COL_INDEX]] : index to i64
 CHECK-DAG:        %[[ROW_SUB:.*]] = arith.subi %[[C10]], %[[ROW_64]] : i64
 CHECK-DAG:        %[[COL_SUB:.*]] = arith.subi %[[C125]], %[[COL_64]] : i64
 CHECK-DAG:        %[[OFFSET_IDX:.*]] = xla.apply_indexing #[[MAP2]](%[[PID_INDEX]])
@@ -373,7 +376,6 @@ CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR0_LOAD]], [%[[ROW_SUB]], %[[COL_
 CHECK-NEXT:       tt.load {{.*}} : !tt.ptr<tensor<1x1x128xf32>>
 CHECK-DAG:        tt.make_tensor_ptr %[[P1]], [%[[C127]]], {{.*}} [%[[ZERO]]] {order = array<i32: 0>} : <tensor<128xf32>>
 CHECK-NEXT:       tt.load {{.*}} : !tt.ptr<tensor<128xf32>>
-CHECK-DAG:        %[[PID_I64:.*]] = arith.index_castui %[[PID_INDEX]] : index to i64
 CHECK-DAG:        %[[BASE_PTR2_LOAD:.*]] = tt.addptr %[[P2]], %[[PID_I64]] : !tt.ptr<f32>, i64
 CHECK-DAG:        tt.make_tensor_ptr %[[BASE_PTR2_LOAD]], [%[[ROW_SUB]], %[[COL_SUB]]], {{.*}} [%[[ZERO]], %[[ZERO]]] {order = array<i32: 1, 0>} : <tensor<1x1xf32>>
 CHECK-NEXT:       tt.load {{.*}} : !tt.ptr<tensor<1x1xf32>>
@@ -1438,6 +1440,61 @@ CHECK:     tt.store
 
   EXPECT_TRUE(
       RunAndCompareNoHloPasses(kHloText, ErrorSpec{/*aabs=*/0, /*arel=*/0}));
+}
+
+// Reproducer from b/384110192.
+TEST_F(TritonEmitterTest,
+       FusionWithOutputContainingMoreThanInt32MaxElementsExecutesCorrectly) {
+  // The point here is to check the output of the Triton fusion. The `slice` op
+  // at the end is inserted to allow the comparison of output to run in a
+  // reasonable amount of time, and has been proven to still correctly capture
+  // the indexing overflow behaviour of the Triton fusion that we're checking
+  // for.
+  constexpr absl::string_view kTritonHloText = R"(
+computation {
+  p0 = s8[256]{0} parameter(0)
+  ROOT broadcast = s8[16777217,256]{1,0} broadcast(p0), dimensions={1}
+}
+
+ENTRY entry_computation {
+  p0 = s8[256]{0} parameter(0)
+  fusion = s8[16777217,256]{1,0} fusion(p0), kind=kCustom,
+    calls=computation,
+    backend_config={
+      "fusion_backend_config":{
+        "kind":"__triton",
+        "block_level_fusion_config":{
+          "output_tile_sizes":["2","256"],"num_warps":"1"}}}
+  ROOT slice = s8[1000,256]{1,0} slice(fusion), slice={[16776217:16777217], [0:256]}
+})";
+
+  constexpr absl::string_view kEmittersHloText = R"(
+computation {
+  p0 = s8[256]{0} parameter(0)
+  ROOT broadcast = s8[16777217,256]{1,0} broadcast(p0), dimensions={1}
+}
+
+ENTRY entry_computation {
+  p0 = s8[256]{0} parameter(0)
+  fusion = s8[16777217,256]{1,0} fusion(p0), kind=kCustom,
+    calls=computation
+  ROOT slice = s8[1000,256]{1,0} slice(fusion), slice={[16776217:16777217], [0:256]}
+})";
+
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> triton_module,
+                          ParseAndReturnVerifiedModule(kTritonHloText));
+  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> emitters_module,
+                          ParseAndReturnVerifiedModule(kEmittersHloText));
+
+  const Shape& triton_fusion_shape = triton_module->entry_computation()
+                                         ->root_instruction()
+                                         ->operand(0)
+                                         ->shape();
+
+  ASSERT_GT(Product(triton_fusion_shape.dimensions()), 1l << 32);
+  EXPECT_TRUE(RunAndCompareTwoModules(
+      std::move(triton_module), std::move(emitters_module),
+      ErrorSpec{/*aabs=*/0, /*arel=*/0}, /*run_hlo_passes=*/false));
 }
 
 }  // namespace
