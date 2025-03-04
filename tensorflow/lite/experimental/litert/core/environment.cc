@@ -14,6 +14,10 @@
 
 #include "tensorflow/lite/experimental/litert/core/environment.h"
 
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#endif  // !defined(_WIN32)
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -42,8 +46,17 @@ litert::Expected<LiteRtEnvironmentT::Ptr> LiteRtEnvironmentT::CreateWithOptions(
     }
   }
 
-  // Find `LiteRtRegisterAcceleratorGpuOpenCl` to register the GPU delegate.
+#if defined(_WIN32)
   void* lib_opencl = nullptr;
+#else   // defined(_WIN32)
+  // Find `LiteRtRegisterAcceleratorGpuOpenCl` to register the GPU delegate.
+  static void* lib_opencl =
+      tflite::SharedLibrary::LoadLibrary("libLiteRtGpuAccelerator.so");
+  if (!lib_opencl) {
+    // If the library is not found, find the symbol in the current library.
+    lib_opencl = RTLD_DEFAULT;
+  }
+#endif  // defined(_WIN32)
   auto opencl_registrar_func = reinterpret_cast<void (*)(LiteRtEnvironment)>(
       tflite::SharedLibrary::GetLibrarySymbol(
           lib_opencl, "LiteRtRegisterAcceleratorGpuOpenCl"));
