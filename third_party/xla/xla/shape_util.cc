@@ -100,7 +100,10 @@ void PrintTupleShapes(Printer* printer, absl::Span<const Shape> tuple_shapes) {
   PrintShape<kPrintLayout>(printer, tuple_shapes[0]);
   for (int64_t i = 1; i < tuple_shapes.size(); ++i) {
     if (i % kAnnotationPrintInterval == 0) {
-      printer->Append(absl::StrFormat(", /*index=%lld*/", i));
+      // Faster than printer->Append(absl::StrFormat(", /*index=%lld*/", i));
+      printer->Append(", /*index=");
+      printer->Append(i);
+      printer->Append("*/");
     } else {
       printer->Append(", ");
     }
@@ -115,7 +118,6 @@ absl::StatusOr<Shape> MakeShapeWithLayoutInternal(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     absl::Span<const int64_t> minor_to_major,
     absl::Span<const DimLevelType> dim_level_types,
-    absl::Span<const bool> dim_unique, absl::Span<const bool> dim_ordered,
     absl::Span<const Tile> tiles, int64_t tail_padding_alignment_in_elements,
     PrimitiveType index_primitive_type, PrimitiveType pointer_primitive_type,
     int64_t element_size_in_bits, int64_t memory_space,
@@ -138,7 +140,7 @@ absl::StatusOr<Shape> MakeShapeWithLayoutInternal(
     element_size_in_bits = 0;
   }
   *shape.mutable_layout() = LayoutUtil::MakeLayout(
-      minor_to_major, dim_level_types, dim_unique, dim_ordered, tiles,
+      minor_to_major, dim_level_types, tiles,
       tail_padding_alignment_in_elements, index_primitive_type,
       pointer_primitive_type, element_size_in_bits, memory_space, split_configs,
       std::move(physical_shape));
@@ -183,8 +185,8 @@ std::ostream& operator<<(std::ostream& out, const ShapeIndex& shape_index) {
   bool equal = Shape::Equal()(lhs, rhs);
 
   if (!equal && VLOG_IS_ON(3)) {
-    VLOG(3) << "ShapeUtil::Equal differ: lhs = " << lhs.ShortDebugString()
-            << ", rhs = " << rhs.ShortDebugString();
+    VLOG(3) << "ShapeUtil::Equal differ: lhs = " << lhs.ToString()
+            << ", rhs = " << rhs.ToString();
   }
 
   return equal;
@@ -195,7 +197,7 @@ std::ostream& operator<<(std::ostream& out, const ShapeIndex& shape_index) {
   bool equal = Shape::Equal().IgnoreElementType()(lhs, rhs);
   if (!equal && VLOG_IS_ON(3)) {
     VLOG(3) << "ShapeUtil::EqualIgnoringElementType differ: lhs = "
-            << lhs.ShortDebugString() << ", rhs = " << rhs.ShortDebugString();
+            << lhs.ToString() << ", rhs = " << rhs.ToString();
   }
 
   return equal;
@@ -206,7 +208,7 @@ std::ostream& operator<<(std::ostream& out, const ShapeIndex& shape_index) {
   bool equal = Shape::Equal().IgnoreFpPrecision()(lhs, rhs);
   if (!equal && VLOG_IS_ON(3)) {
     VLOG(3) << "ShapeUtil::EqualIgnoringFpPrecision differ: lhs = "
-            << lhs.ShortDebugString() << ", rhs = " << rhs.ShortDebugString();
+            << lhs.ToString() << ", rhs = " << rhs.ToString();
   }
 
   return equal;
@@ -344,8 +346,7 @@ static std::vector<bool> MakeDynamicDimensions(
     int64_t tail_padding_alignment_in_elements, int64_t element_size_in_bits,
     int64_t memory_space, absl::Span<const SplitConfig> split_configs) {
   auto ret = MakeShapeWithLayoutInternal(
-      element_type, dimensions, minor_to_major, /*dim_level_types=*/{},
-      /*dim_unique=*/{}, /*dim_ordered=*/{}, tiles,
+      element_type, dimensions, minor_to_major, /*dim_level_types=*/{}, tiles,
       tail_padding_alignment_in_elements,
       /*index_primitive_type=*/PRIMITIVE_TYPE_INVALID,
       /*pointer_primitive_type=*/PRIMITIVE_TYPE_INVALID, element_size_in_bits,
@@ -359,15 +360,14 @@ static std::vector<bool> MakeDynamicDimensions(
     PrimitiveType element_type, absl::Span<const int64_t> dimensions,
     absl::Span<const int64_t> minor_to_major,
     absl::Span<const DimLevelType> dim_level_types,
-    absl::Span<const bool> dim_unique, absl::Span<const bool> dim_ordered,
     PrimitiveType index_primitive_type, PrimitiveType pointer_primitive_type,
     int64_t tail_padding_alignment_in_elements, int64_t element_size_in_bits,
     int64_t memory_space, std::optional<Shape> physical_shape) {
   auto ret = MakeShapeWithLayoutInternal(
-      element_type, dimensions, minor_to_major, dim_level_types, dim_unique,
-      dim_ordered, /*tiles=*/{}, tail_padding_alignment_in_elements,
-      index_primitive_type, pointer_primitive_type, element_size_in_bits,
-      memory_space, /*split_configs=*/{}, std::move(physical_shape));
+      element_type, dimensions, minor_to_major, dim_level_types,
+      /*tiles=*/{}, tail_padding_alignment_in_elements, index_primitive_type,
+      pointer_primitive_type, element_size_in_bits, memory_space,
+      /*split_configs=*/{}, std::move(physical_shape));
   TF_CHECK_OK(ret.status());
   return *ret;
 }
@@ -375,7 +375,7 @@ static std::vector<bool> MakeDynamicDimensions(
 /* static */ Shape ShapeUtil::MoveDimToMajor(const Shape& shape, int64_t dim) {
   if (shape.IsTuple()) {
     std::vector<Shape> result_shapes;
-    result_shapes.reserve(shape.tuple_shapes_size());
+    result_shapes.reserve(shape.tuple_shapes().size());
     for (const Shape& s : shape.tuple_shapes()) {
       result_shapes.push_back(MoveDimToMajor(s, dim));
     }
@@ -493,7 +493,7 @@ ShapeUtil::MakeShapeWithDescendingLayoutAndSamePhysicalLayout(
 
 /* static */ void ShapeUtil::UpdateTupleShape(const Shape& shape, int64_t index,
                                               Shape* tuple_shape) {
-  CHECK_LT(index, tuple_shape->tuple_shapes_size());
+  CHECK_LT(index, tuple_shape->tuple_shapes().size());
   *tuple_shape->mutable_tuple_shapes(index) = shape;
 }
 
@@ -622,7 +622,7 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
 }
 
 /* static */ int64_t ShapeUtil::TupleElementCount(const Shape& shape) {
-  return shape.tuple_shapes_size();
+  return shape.tuple_shapes().size();
 }
 
 /* static */ const Shape& ShapeUtil::GetTupleElementShape(const Shape& shape,
@@ -643,8 +643,8 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
                                          int64_t limit) {
   TF_DCHECK_OK(ValidateShapeWithOptionalLayout(tuple));
   CHECK(tuple.IsTuple());
-  CHECK_LE(start, tuple.tuple_shapes_size());
-  CHECK_LE(limit, tuple.tuple_shapes_size());
+  CHECK_LE(start, tuple.tuple_shapes().size());
+  CHECK_LE(limit, tuple.tuple_shapes().size());
 
   std::vector<Shape> new_elements(tuple.tuple_shapes().begin() + start,
                                   tuple.tuple_shapes().begin() + limit);
@@ -890,14 +890,14 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
   TF_DCHECK_OK(ValidateShape(shape));
   CHECK_EQ(TUPLE, shape.element_type());
   CHECK_GT(pointer_size, 0);
-  return pointer_size * shape.tuple_shapes_size();
+  return pointer_size * shape.tuple_shapes().size();
 }
 
 /* static */ int64_t ShapeUtil::ByteSizeOfElements(const Shape& shape) {
   TF_DCHECK_OK(ValidateShapeWithOptionalLayout(shape));
   int64_t allocated_element_count;
 
-  CHECK(LayoutUtil::IsDenseArray(shape)) << shape.ShortDebugString();
+  CHECK(LayoutUtil::IsDenseArray(shape)) << shape.ToString();
   allocated_element_count = ElementsIn(shape);
 
   if (shape.has_layout() && shape.layout().element_size_in_bits() != 0) {
@@ -1064,7 +1064,7 @@ absl::Status ValidateNonLayoutProperties(const Shape& shape) {
                                                 PrimitiveType type) {
   if (original.IsTuple()) {
     std::vector<Shape> new_operands;
-    new_operands.reserve(original.tuple_shapes_size());
+    new_operands.reserve(original.tuple_shapes().size());
     for (const Shape& operand : original.tuple_shapes()) {
       new_operands.push_back(ChangeElementType(operand, type));
     }
@@ -1083,7 +1083,7 @@ absl::Status ValidateNonLayoutProperties(const Shape& shape) {
                                           ShapeIndexView index) {
   const Shape* subshape = &shape;
   for (auto i : index) {
-    if (!subshape->IsTuple() || i >= subshape->tuple_shapes_size() || i < 0) {
+    if (!subshape->IsTuple() || i >= subshape->tuple_shapes().size() || i < 0) {
       return false;
     }
     subshape = &subshape->tuple_shapes(i);
@@ -1116,7 +1116,7 @@ absl::Status ValidateNonLayoutProperties(const Shape& shape) {
   const Shape* return_shape = &shape;
   for (auto i : index) {
     if (!return_shape->IsTuple() || i < 0 ||
-        i >= return_shape->tuple_shapes_size()) {
+        i >= return_shape->tuple_shapes().size()) {
       return InvalidArgument(
           "Shape index %s not a valid subshape index for tuple with shape %s",
           ShapeIndex(index).ToString(), shape.DebugString());
@@ -1424,8 +1424,8 @@ ShapeUtil::ReshapeLeavesDimensionsUnmodified(
   }
 
   if (ElementsIn(input_shape) != ElementsIn(output_shape)) {
-    VLOG(3) << "input_shape=" << input_shape.ShortDebugString()
-            << ", output_shape=" << output_shape.ShortDebugString();
+    VLOG(3) << "input_shape=" << input_shape.ToString()
+            << ", output_shape=" << output_shape.ToString();
     return false;
   }
   if (ElementsIn(input_shape) == 0) {

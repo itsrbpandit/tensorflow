@@ -24,7 +24,6 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "absl/utility/utility.h"
 #include "xla/backends/gpu/collectives/gpu_collectives.h"
 #include "xla/backends/gpu/collectives/nccl_errors.h"
 #include "xla/core/collectives/communicator.h"
@@ -34,6 +33,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_matchers.h"
 
 #if TENSORFLOW_USE_ROCM
 #include "rocm/rocm_config.h"

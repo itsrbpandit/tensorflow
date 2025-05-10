@@ -45,9 +45,6 @@ class NcclCollectives : public GpuCollectives {
 
   absl::StatusOr<CliqueId> CreateUniqueCliqueId() const final;
 
-  absl::Status GroupStart() final;
-  absl::Status GroupEnd() final;
-
   absl::StatusOr<std::vector<std::unique_ptr<Communicator>>>
   CreateCommunicators(const CliqueKey& clique_key,
                       const std::optional<CliqueIds>& clique_ids,

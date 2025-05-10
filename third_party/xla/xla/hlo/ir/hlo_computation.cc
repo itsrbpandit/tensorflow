@@ -182,10 +182,6 @@ HloComputation::~HloComputation() {
     CHECK(FusionInstruction()->fused_instructions_computation() == this);
     FusionInstruction()->ClearCalledComputations();
   }
-  if (IsAsyncComputation()) {
-    CHECK(async_start_->async_wrapped_computation() == this);
-    async_start_->ClearCalledComputations();
-  }
   Cleanup();
   ClearCalledComputations();
 
@@ -906,9 +902,6 @@ HloComputation::ChannelDependencies HloComputation::ComputeChannelDependencies()
         std::optional<int64_t> channel_id = instruction->channel_id();
         if (channel_id) {
           Instructions& group = channel_groups[*channel_id];
-          for (const HloInstruction* group_inst : group) {
-            dependencies[group_inst].push_back(instruction);
-          }
           dependencies[instruction] = group;
           group.push_back(instruction);
         }
@@ -1659,7 +1652,7 @@ absl::StatusOr<bool> HloComputation::ReplaceInstructionWithDifferentShape(
     new_instruction->set_frontend_attributes(
         old_instruction->frontend_attributes());
   }
-  CopyOriginalValue(old_instruction, new_instruction);
+  MoveOriginalValue(old_instruction, new_instruction);
 
   // Like the metadata above, if the user didn't specify any sharding
   // information on the new instruction we should copy the old sharding
